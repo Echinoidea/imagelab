@@ -1,0 +1,4 @@
+./images/
+flake.lock
+.direnv/
+.envrc
