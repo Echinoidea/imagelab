@@ -2,44 +2,31 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#ifndef STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #include "../stb_image/stb_image.h"
+#endif
+#ifndef STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../stb_image/stb_image_write.h"
+#endif
+
+#include "./filterconfig.h"
+#include "./effect.c"
+#include "./filter.c"
 
 /* type definition for a function which compares two pixels and returns a bool
-	 where uint8_t is the pixel, and int is the rhs value
+	 where uint8_t is the pixel, and filterconfig_t is the data that the filter function needs
  */
-typedef bool (*filter_fn)(uint8_t*, int);
-typedef uint8_t (*effect_fn)(uint8_t*, int);
+typedef bool (*filterfn_t)(uint8_t*, filterconfig_t);
+typedef uint8_t (*effectfn_t)(uint8_t*, int);
 
 /** Apply an effect to a single pixel */
-uint8_t apply(uint8_t *p, effect_fn effect, int effect_value, filter_fn filter, int filter_value) {
-	if (filter(p, filter_value)) {
+uint8_t apply(uint8_t *p, effectfn_t effect, int effect_value, filterfn_t filter, filterconfig_t filter_config) {
+	if (filter(p, filter_config)) {
 		return effect(p, effect_value);
 	}
 	return *p;
-}
-
-
-uint8_t and_effect(uint8_t *p, int color) {
-	return (uint8_t)(*p & color);
-}
-uint8_t or_effect(uint8_t *p, int color) {
-	return (uint8_t)(*p & color);
-}
-uint8_t xor_effect(uint8_t *p, int color) {
-	return (uint8_t)(*p & color);
-}
-
-bool greater_than(uint8_t *p, int value) {
-	return (*p > value);
-}
-bool less_than(uint8_t *p, int value) {
-	return (*p < value);
-}
-bool between(uint8_t *p, int min, int max) {
-	return (*p > min && *p < max);
 }
 
 unsigned char* and(unsigned char* img, int width, int height, int channels, int r, int g, int b) {
@@ -51,14 +38,30 @@ unsigned char* and(unsigned char* img, int width, int height, int channels, int 
 	}
 
 	for (unsigned char *p = img, *po = out_img; p != img + img_size; p += channels, po += channels) {
-		*po = apply(p, and_effect, r, greater_than, 50);
-    *(po + 1) = apply((p + 1), and_effect, g, less_than, 255);
-    *(po + 2) = apply((p + 2), and_effect, b, less_than, 255);
+		*po = apply(p, and_fx, r, between, (filterconfig_t){0, 200, 255});
+    *(po + 1) = apply((p + 1), and_fx, g, less, (filterconfig_t){255, -1, -1});
+    *(po + 2) = apply((p + 2), and_fx, b, less, (filterconfig_t){255, -1, -1});
 	}
 
 	return out_img;
 }
 
+unsigned char* cutoff(unsigned char* img, int width, int height, int channels, filterconfig_t r_cfg, filterconfig_t g_cfg, filterconfig_t b_cfg) {
+	size_t img_size = width * height * channels;
+	unsigned char *out_img = malloc(img_size);
+	if (out_img == NULL) {
+		printf("Unable to allocate memory for output image\n");
+		exit(1);
+	}
+
+	for (unsigned char *p = img, *po = out_img; p != img + img_size; p += channels, po += channels) {
+		*po = apply(p, xor_fx, *p, outside, r_cfg);
+    *(po + 1) = apply((p + 1), xor_fx, *(p + 1), outside, g_cfg);
+    *(po + 2) = apply((p + 2), xor_fx, *(p + 2), outside, b_cfg);
+	}
+
+	return out_img;
+}
 
 unsigned char* grayscale(unsigned char *img, int width, int height, int channels) {
 	size_t img_size = width * height * channels;
@@ -131,16 +134,27 @@ int main(void) {
 	unsigned char *red_and_img = and(img, width, height, channels, 255, 0, 0);
 	unsigned char *green_and_img = and(img, width, height, channels, 0, 255, 0);
 	unsigned char *blue_and_img = and(img, width, height, channels, 0, 0, 255);
+	unsigned char *cutoff_img = cutoff(img, width, height, channels, (filterconfig_t){0, 100, 255}, (filterconfig_t){0, 100, 255}, (filterconfig_t){0, 0, 0});
 	
 	stbi_write_jpg("test_red.jpg", width, height, channels, red_and_img, 100);
 	stbi_write_jpg("test_blue.jpg", width, height, channels, green_and_img, 100);
 	stbi_write_jpg("test_green.jpg", width, height, channels, blue_and_img, 100);
+	stbi_write_jpg("test_cutoff.jpg", width, height, channels, cutoff_img, 100);
 	
 	stbi_image_free(red_and_img);
 	stbi_image_free(green_and_img);
 	stbi_image_free(blue_and_img);
 	stbi_image_free(gray_img);
+	stbi_image_free(cutoff_img);
 	stbi_image_free(img); // Free the memory
 	
 	return 0;
 }
+
+/**
+	 (load-image :path "image.jpg" :var image)
+	 (defilter red-greater-than-blue
+	 (less R B))
+	 (xor :image image :where red-greater-than-blue) ;; runs the xor C function
+	 (save-image :path "out.jpg" :image image)
+**/
